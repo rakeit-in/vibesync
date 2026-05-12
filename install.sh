@@ -99,19 +99,25 @@ done
 # ---------- Resolve "latest" to an actual tag ----------
 
 if [ "${VERSION}" = "latest" ]; then
-    log "resolving latest version from GitHub..."
+    log "resolving latest version from GitHub releases..."
+    # Use the HTML redirect at /releases/latest instead of the REST API,
+    # because the API enforces a 60-req/hr limit on unauthenticated IPs,
+    # which routinely breaks installs on shared networks.
+    # /releases/latest responds with 302 -> /releases/tag/<TAG>.
+    latest_url="https://github.com/${GITHUB_REPO}/releases/latest"
     if have curl; then
-        resolved="$(curl --fail --location --silent --show-error \
-            "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+        location="$(curl --head --silent --show-error --location --max-redirs 0 \
+            "${latest_url}" 2>/dev/null | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r\n')"
     elif have wget; then
-        resolved="$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+        location="$(wget --max-redirect=0 --method=HEAD --server-response --quiet \
+            -O /dev/null "${latest_url}" 2>&1 | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r\n')"
     else
         fail "Neither curl nor wget is available."
     fi
-    if [ -z "${resolved}" ]; then
-        fail "failed to resolve latest version from GitHub API" 3
+    # Extract tag from the redirect URL: .../releases/tag/<TAG>
+    resolved="${location##*/tag/}"
+    if [ -z "${resolved}" ] || [ "${resolved}" = "${location}" ]; then
+        fail "failed to resolve latest version from GitHub (no release published yet?)" 3
     fi
     log "latest version: ${resolved}"
     VERSION="${resolved}"
