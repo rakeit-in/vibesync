@@ -71,13 +71,26 @@ function Fail($msg, [int]$code = 1) {
 # ---------- Resolve "latest" to an actual tag ----------
 
 if ($Version -eq 'latest') {
-    Write-Info "resolving latest version from GitHub..."
+    Write-Info "resolving latest version from GitHub releases..."
     try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$GitHubRepo/releases/latest" -UseBasicParsing
-        $Version = $release.tag_name
+        # Use the HTML redirect at /releases/latest instead of the REST API,
+        # because the API enforces a 60-req/hr limit on unauthenticated IPs,
+        # which routinely breaks installs on shared networks.
+        # /releases/latest responds with 302 -> /releases/tag/<TAG>.
+        $req = [System.Net.HttpWebRequest]::Create("https://github.com/$GitHubRepo/releases/latest")
+        $req.AllowAutoRedirect = $false
+        $req.Method = 'HEAD'
+        $req.UserAgent = 'vibesync-install'
+        $resp = $req.GetResponse()
+        $location = $resp.Headers['Location']
+        $resp.Close()
+        if (-not $location -or $location -notmatch '/tag/([^/]+)$') {
+            Fail "failed to resolve latest version (no release published yet?)" 3
+        }
+        $Version = $Matches[1]
         Write-Info "latest version: $Version"
     } catch {
-        Fail "failed to resolve latest version from GitHub API: $($_.Exception.Message)" 3
+        Fail "failed to resolve latest version from GitHub: $($_.Exception.Message)" 3
     }
 }
 
